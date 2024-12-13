@@ -3,6 +3,7 @@ package handlers
 import (
 	"context"
 	"fmt"
+	"strconv"
 	"time"
 
 	"github.com/Men-fish/ticket-v1/models"
@@ -18,7 +19,9 @@ func (h *TicketHandler) GetMany(ctx *fiber.Ctx) error {
 	context, cancel := context.WithTimeout(context.Background(), time.Duration(5*time.Second))
 	defer cancel()
 
-	tickets, err := h.repository.GetMany(context)
+	userId := uint(ctx.Locals("userId").(float64))
+
+	tickets, err := h.repository.GetMany(context, userId)
 
 	if err != nil {
 		return ctx.Status(fiber.StatusBadRequest).JSON(&fiber.Map{
@@ -35,12 +38,13 @@ func (h *TicketHandler) GetMany(ctx *fiber.Ctx) error {
 }
 
 func (h *TicketHandler) GetOne(ctx *fiber.Ctx) error {
-	ticketId := ctx.Params("ticketId")
-
 	context, cancel := context.WithTimeout(context.Background(), time.Duration(5*time.Second))
 	defer cancel()
 
-	ticket, err := h.repository.GetOne(context, ticketId)
+	ticketId, _ := strconv.Atoi(ctx.Params("ticketId"))
+	userId := uint(ctx.Locals("userId").(float64))
+
+	ticket, err := h.repository.GetOne(context, userId, uint(ticketId))
 
 	if err != nil {
 		return ctx.Status(fiber.StatusBadRequest).JSON(&fiber.Map{
@@ -50,7 +54,11 @@ func (h *TicketHandler) GetOne(ctx *fiber.Ctx) error {
 	}
 
 	var QRCode []byte
-	QRCode, err = qrcode.Encode(fmt.Sprint("ticketId:", ticket.ID), qrcode.Medium, 256)
+	QRCode, err = qrcode.Encode(
+		fmt.Sprintf("ticketId:%v,ownerId:%v", ticketId, userId),
+		qrcode.Medium,
+		256,
+	)
 
 	if err != nil {
 		return ctx.Status(fiber.StatusBadRequest).JSON(&fiber.Map{
@@ -70,10 +78,11 @@ func (h *TicketHandler) GetOne(ctx *fiber.Ctx) error {
 }
 
 func (h *TicketHandler) CreateOne(ctx *fiber.Ctx) error {
-	ticket := &models.Ticket{}
-
 	context, cancel := context.WithTimeout(context.Background(), time.Duration(5*time.Second))
 	defer cancel()
+
+	ticket := &models.Ticket{}
+	userId := uint(ctx.Locals("userId").(float64))
 
 	if err := ctx.BodyParser(ticket); err != nil {
 		return ctx.Status(fiber.StatusUnprocessableEntity).JSON(&fiber.Map{
@@ -83,7 +92,7 @@ func (h *TicketHandler) CreateOne(ctx *fiber.Ctx) error {
 		})
 	}
 
-	ticket, err := h.repository.CreateOne(context, ticket)
+	ticket, err := h.repository.CreateOne(context, userId, ticket)
 
 	if err != nil {
 		return ctx.Status(fiber.StatusBadRequest).JSON(&fiber.Map{
@@ -101,14 +110,23 @@ func (h *TicketHandler) CreateOne(ctx *fiber.Ctx) error {
 }
 
 func (h *TicketHandler) ValidateOne(ctx *fiber.Ctx) error {
-	ticketId := ctx.Params("ticketId")
-	validateData := make(map[string]interface{})
-	validateData["entered"] = true
-
 	context, cancel := context.WithTimeout(context.Background(), time.Duration(5*time.Second))
 	defer cancel()
 
-	ticket, err := h.repository.UpdateOne(context, ticketId, validateData)
+	validateBody := &models.ValidateTicket{}
+
+	if err := ctx.BodyParser(validateBody); err != nil {
+		return ctx.Status(fiber.StatusUnprocessableEntity).JSON(&fiber.Map{
+			"status":  "fail",
+			"message": err.Error(),
+			"data":    nil,
+		})
+	}
+
+	validateData := make(map[string]interface{})
+	validateData["entered"] = true
+
+	ticket, err := h.repository.UpdateOne(context, validateBody.OwnerId, validateBody.TicketId, validateData)
 
 	if err != nil {
 		return ctx.Status(fiber.StatusBadRequest).JSON(&fiber.Map{
@@ -133,5 +151,5 @@ func NewTicketHandler(router fiber.Router, repository models.TicketRepository) {
 	router.Get("/", handler.GetMany)
 	router.Post("/", handler.CreateOne)
 	router.Get("/:ticketId", handler.GetOne)
-	router.Put("/validate/:ticketId", handler.ValidateOne)
+	router.Post("/validate", handler.ValidateOne)
 }
